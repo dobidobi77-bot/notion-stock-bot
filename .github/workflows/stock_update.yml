@@ -1,0 +1,26 @@
+name: Stock Price Update
+on:
+  schedule:
+    - cron: '0 * * * *'  # 매 시간 정각(UTC)마다 자동 실행 
+  workflow_dispatch:      # 깃허브 웹에서 수동으로 버튼 눌러 실행!
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install yfinance requests
+
+      - name: Run script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          DATABASE_ID: ${{ secrets.DATABASE_ID }}
+        run: python "05-1.Notion Stock Price_Update.py"
