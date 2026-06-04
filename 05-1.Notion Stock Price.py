@@ -1,11 +1,13 @@
 import yfinance as yf
 import requests
+import os  # <--- 이 줄 추가!
 
 # ==========================================
-# 1. 노션 API 출입증 설정 (여기에 복사한 값 붙여넣기!)
+# 1. 노션 API 출입증 설정 (깃허브 금고에서 가져오기)
 # ==========================================
-NOTION_TOKEN = "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"
-DATABASE_ID = "36eca601b534809abf18c65802a03a97"  # 노션 데이터베이스 ID (URL에서 복사한 긴 문자열)
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+DATABASE_ID = os.getenv("DATABASE_ID")
+
 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
