@@ -61,8 +61,6 @@ def get_stock_data(ticker_symbol):
 def update_notion_page(page_id, price, earnings_date):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     
-    # 💡 노션 자체 '최종 편집 일시' 기능이 있으므로 파이썬 시간 계산 코드는 삭제함!
-    # 오직 주가와 실적 발표일 데이터만 조립해서 보냅니다.
     properties = {
         "현재 주가": {"number": price}
     }
@@ -88,31 +86,6 @@ def main():
     print("🚀 주식 및 실적 데이터 업데이트 시작...")
     pages = get_notion_pages()
     
-    for page in pages:
-        props = page.get("properties", {})
-        ticker_prop = props.get("종목코드", {}).get("rich_text", [])
-        
-        if not ticker_prop:
-            continue
-            
-        ticker_symbol = ticker_prop[0].get("plain_text", "")
-        print(f"\n🔍 [{ticker_symbol}] 데이터 확인 중...")
-        
-        # 야후 파이낸스 조회
-        price, earnings_date = get_stock_data(ticker_symbol)
-        
-        if price is not None:
-            # 노션 업데이트
-            update_notion_page(page["id"], price, earnings_date)
-
-if __name__ == "__main__":
-# ==========================================
-# 5. 메인 실행 함수 (로봇 작동!)
-# ==========================================
-def main():
-    print("🚀 주식 및 실적 데이터 업데이트 시작...")
-    pages = get_notion_pages()
-    
     # 🕵️‍♂️ 탐정 코드: 로봇이 노션에서 찾은 열 이름들을 전부 출력합니다!
     if len(pages) > 0:
         print(f"📊 로봇이 찾은 노션 열 이름들: {list(pages[0].get('properties', {}).keys())}")
@@ -121,6 +94,8 @@ def main():
 
     for page in pages:
         props = page.get("properties", {})
+        
+        # 💡 종목코드 열이 ≡(일반 텍스트) 아이콘일 때의 완벽한 코드!
         ticker_prop = props.get("종목코드", {}).get("rich_text", [])
         
         if not ticker_prop:
