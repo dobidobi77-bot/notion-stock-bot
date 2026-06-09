@@ -1,84 +1,109 @@
-import yfinance as yf
+import os
 import requests
-import os  # <--- 이 줄 추가!
+import yfinance as yf
 
 # ==========================================
-# 1. 노션 API 출입증 설정 (깃허브 금고에서 가져오기)
+# 1. 노션 및 깃허브 설정 (깃허브 금고에서 가져오기)
 # ==========================================
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("DATABASE_ID")
 
-
-HEADERS = {
+headers = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Content-Type": "application/json",
-    "Notion-Version": "2022-06-28"  # 노션 API 버전
+    "Notion-Version": "2022-06-28"
 }
 
 # ==========================================
-# 2. 노션 데이터베이스 읽어오기 (표 전체 스캔)
+# 2. 노션 데이터베이스 읽어오기
 # ==========================================
 def get_notion_pages():
     url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-    response = requests.post(url, headers=HEADERS)
+    response = requests.post(url, headers=headers)
     
     if response.status_code != 200:
-        print(f"❌ 노션 연결 실패! 권한이나 ID를 확인하세요: {response.text}")
+        print(f"❌ 노션 연결 실패! 에러: {response.text}")
         return []
     
     return response.json().get("results", [])
 
 # ==========================================
-# 3. 노션 '현재 주가' 칸 업데이트 (데이터 쏘기)
+# 3. 야후 파이낸스에서 데이터 가져오기 (주가 + 실적일)
 # ==========================================
-def update_notion_price(page_id, current_price):
-    url = f"https://api.notion.com/v1/pages/{page_id}"
-    
-    # 노션의 '현재 주가' 열에 숫자를 덮어쓰는 명령
-    data = {
-        "properties": {
-            "현재 주가": {
-                "number": current_price
-            }
-        }
-    }
-    response = requests.patch(url, headers=HEADERS, json=data)
-    
-    if response.status_code == 200:
-        print("   ✅ 노션 업데이트 완료!")
-    else:
-        print(f"   ❌ 업데이트 실패: {response.text}")
-
-# ==========================================
-# 4. 🚀 메인 실행 봇 작동!
-# ==========================================
-print("🤖 노션 주식 봇 작동을 시작합니다...\n")
-pages = get_notion_pages()
-
-for page in pages:
-    page_id = page["id"]
-    props = page["properties"]
-    
+def get_stock_data(ticker_symbol):
     try:
-        # 노션 표에서 '종목코드'와 '주식 종목 이름' 읽어오기
-        ticker = props["종목코드"]["rich_text"][0]["text"]["content"]
-        name = props["종목"]["title"][0]["text"]["content"]
-    except (KeyError, IndexError):
-        # 종목코드가 비어있는 줄은 건너뜁니다.
-        continue
-    
-    print(f"🔍 [{name}] ({ticker}) 주가 확인 중...")
-    
-    try:
-        # yfinance로 실시간 주가 긁어오기
-        stock = yf.Ticker(ticker)
-        price = stock.fast_info['last_price']
-        print(f"   💰 현재가: {price:,.2f}")
+        stock = yf.Ticker(ticker_symbol)
         
-        # 가져온 주가를 노션에 쏘기
-        update_notion_price(page_id, price)
+        # 1. 현재 주가 가져오기
+        current_price = stock.info.get("currentPrice") or stock.info.get("regularMarketPrice")
+        
+        # 2. 다음 실적 발표 예정일(Earnings Date) 가져오기
+        earnings_date_str = ""
+        calendar = stock.calendar
+        
+        if calendar is not None and len(calendar) > 0:
+            try:
+                if 'Earnings Date' in calendar:
+                    first_date = calendar['Earnings Date'][0]
+                    earnings_date_str = first_date.strftime("%Y-%m-%d")
+            except Exception as e:
+                pass
+                
+        return current_price, earnings_date_str
         
     except Exception as e:
-        print(f"   ⚠️ 주가를 가져오는 데 실패했습니다 (티커 확인 요망): {e}")
+        print(f"❌ {ticker_symbol} 데이터 수집 실패: {e}")
+        return None, ""
 
-print("\n🎉 모든 작업이 끝났습니다! 지금 바로 노션을 켜서 확인해 보세요!")
+# ==========================================
+# 4. 노션 페이지 업데이트 하기
+# ==========================================
+def update_notion_page(page_id, price, earnings_date):
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    
+    # 💡 노션 자체 '최종 편집 일시' 기능이 있으므로 파이썬 시간 계산 코드는 삭제함!
+    # 오직 주가와 실적 발표일 데이터만 조립해서 보냅니다.
+    properties = {
+        "현재 주가": {"number": price}
+    }
+    
+    # 실적 발표일 데이터가 있으면 속성에 추가
+    if earnings_date:
+         properties["실적 발표일"] = {
+             "rich_text": [{"text": {"content": earnings_date}}]
+         }
+
+    payload = {"properties": properties}
+    
+    response = requests.patch(url, json=payload, headers=headers)
+    if response.status_code == 200:
+        print(f"✅ 업데이트 성공! (주가: {price}, 실적일: {earnings_date})")
+    else:
+        print(f"❌ 업데이트 실패: {response.text}")
+
+# ==========================================
+# 5. 메인 실행 함수 (로봇 작동!)
+# ==========================================
+def main():
+    print("🚀 주식 및 실적 데이터 업데이트 시작...")
+    pages = get_notion_pages()
+    
+    for page in pages:
+        props = page.get("properties", {})
+        ticker_prop = props.get("티커", {}).get("rich_text", [])
+        
+        if not ticker_prop:
+            continue
+            
+        ticker_symbol = ticker_prop[0].get("plain_text", "")
+        print(f"\n🔍 [{ticker_symbol}] 데이터 확인 중...")
+        
+        # 야후 파이낸스 조회
+        price, earnings_date = get_stock_data(ticker_symbol)
+        
+        if price is not None:
+            # 노션 업데이트
+            update_notion_page(page["id"], price, earnings_date)
+
+if __name__ == "__main__":
+    main()
