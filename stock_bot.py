@@ -90,7 +90,7 @@ def main():
     
     for page in pages:
         props = page.get("properties", {})
-        ticker_prop = props.get("종목코드", {}).get("rich_text", [])
+        ticker_prop = props.get("종목코드", {}).get("title", [])
         
         if not ticker_prop:
             continue
