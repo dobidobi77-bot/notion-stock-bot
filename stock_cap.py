@@ -1,12 +1,14 @@
 import os
-import yfinance as yf
 import requests
-
-print("🚀 노션 시가총액 자동 업데이트 봇 가동!\n")
+import yfinance as yf
 
 # ==========================================
-# 🚨 1. 나의 노션 API 정보 입력 (필수)
+# 1. 노션 및 깃허브 설정 (깃허브 금고에서 가져오기)
 # ==========================================
+
+from dotenv import load_dotenv
+load_dotenv() # 내 컴퓨터에 .env 파일이 있으면 열어라!
+
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("DATABASE_ID")
 
@@ -17,73 +19,94 @@ headers = {
 }
 
 # ==========================================
-# 💡 2. 노션에서 '종목코드' 읽어오기
+# 2. 노션 데이터베이스 읽어오기
 # ==========================================
-def get_notion_data():
+def get_notion_pages():
     url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
     response = requests.post(url, headers=headers)
-    return response.json().get('results', [])
+    
+    if response.status_code != 200:
+        print(f"❌ 노션 연결 실패! 에러: {response.text}")
+        return []
+    
+    return response.json().get("results", [])
 
 # ==========================================
-# 💡 3. 노션의 '시가총액' 빈칸 채워넣기
+# 💡 3. 야후 파이낸스에서 데이터 가져오기 (시가총액 + 단위 변환)
 # ==========================================
-def update_notion_market_cap(page_id, scaled_market_cap):
+def get_market_cap(ticker_symbol):
+    try:
+        stock = yf.Ticker(ticker_symbol)
+        raw_market_cap = stock.info.get("marketCap")
+        
+        if raw_market_cap:
+            # 한국 주식인지 미국 주식인지 판별
+            is_korea = ticker_symbol.endswith('.KS') or ticker_symbol.endswith('.KQ')
+            
+            if is_korea:
+                # 한국 주식: 1억 단위로 나누고 소수점 버림
+                scaled_cap = round(raw_market_cap / 100000000)
+            else:
+                # 미국 주식: 10억 달러(Billion) 단위로 나누고 소수점 2자리까지 표시
+                scaled_cap = round(raw_market_cap / 1000000000, 2)
+                
+            return scaled_cap
+        else:
+            return None
+            
+    except Exception as e:
+        print(f"❌ {ticker_symbol} 데이터 수집 실패: {e}")
+        return None
+
+# ==========================================
+# 💡 4. 노션 페이지 업데이트 하기 (시가총액 전용)
+# ==========================================
+def update_notion_page(page_id, market_cap):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     
-    # 노션의 '시가총액' 열(숫자형)에 변환된 단위를 덮어씁니다.
-    data = {
-        "properties": {
-            "시가총액": {
-                "number": scaled_market_cap
-            }
-        }
+    # 노션의 "시가총액" 열에 숫자 업데이트
+    properties = {
+        "시가총액": {"number": market_cap}
     }
-    requests.patch(url, headers=headers, json=data)
+    
+    payload = {"properties": properties}
+    
+    response = requests.patch(url, json=payload, headers=headers)
+    if response.status_code == 200:
+        print(f"  ✅ 업데이트 성공! (시가총액: {market_cap})")
+    else:
+        print(f"  ❌ 업데이트 실패: {response.text}")
 
 # ==========================================
-# 🚀 4. 메인 실행 로직 (단위 자동 변환 포함)
+# 💡 5. 메인 실행 함수
 # ==========================================
 def main():
-    pages = get_notion_data()
+    print("🚀 시가총액 데이터 업데이트 시작...")
+    pages = get_notion_pages()
     
-    if not pages:
-        print("🚨 노션에서 데이터를 찾을 수 없습니다. 설정 확인 요망.")
+    if len(pages) == 0:
+        print("⚠️ 노션 표에서 아무 데이터도 찾지 못했습니다!")
         return
 
     for page in pages:
-        page_id = page['id']
-        props = page['properties']
+        props = page.get("properties", {})
         
-        # '종목코드' 열(제목 속성)에서 티커 추출
-        try:
-            ticker = props['종목코드']['title'][0]['plain_text']
-        except (KeyError, IndexError):
-            continue # 종목코드가 비어있으면 패스
+        # 종목코드 추출
+        ticker_prop = props.get("종목코드", {}).get("rich_text", [])
+        if not ticker_prop:
+            continue
             
-        print(f"🔍 [{ticker}] 야후 파이낸스에서 시가총액 조회 중...")
+        ticker_symbol = ticker_prop[0].get("plain_text", "")
+        print(f"\n🔍 [{ticker_symbol}] 시가총액 확인 중...")
         
-        # yfinance로 원본 시가총액(marketCap) 가져오기
-        stock = yf.Ticker(ticker)
-        raw_market_cap = stock.info.get('marketCap')
+        # 야후 파이낸스에서 시가총액 조회
+        market_cap = get_market_cap(ticker_symbol)
         
-        if raw_market_cap:
-            # 🌟 핵심: 한국 주식인지 미국 주식인지 판별하여 단위 축소
-            is_korea = ticker.endswith('.KS') or ticker.endswith('.KQ')
-            
-            if is_korea:
-                # 한국 주식: 1억 단위로 나누고 소수점 버림 (정수)
-                scaled_cap = round(raw_market_cap / 100000000)
-                unit = "억 원"
-            else:
-                # 미국 주식: 10억 달러(Billion) 단위로 나누고 소수점 2자리까지 남김
-                scaled_cap = round(raw_market_cap / 1000000000, 2)
-                unit = "Billion 달러"
-                
-            # 변환된 숫자를 노션에 업데이트
-            update_notion_market_cap(page_id, scaled_cap)
-            print(f"  ✅ 업데이트 성공! 시가총액: {scaled_cap:,} {unit}")
+        # 시가총액 데이터가 정상적으로 있다면 노션 업데이트
+        if market_cap is not None:
+            update_notion_page(page["id"], market_cap)
         else:
-            print(f"  ❌ {ticker}의 시가총액 정보를 찾지 못했습니다.")
+            print(f"  ⚠️ {ticker_symbol}의 시가총액 정보를 찾지 못했습니다.")
 
 if __name__ == "__main__":
     main()
